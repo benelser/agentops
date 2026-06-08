@@ -103,6 +103,16 @@ def init_telemetry(service_name: str) -> None:
 _tracer = trace.get_tracer("agentops.instrumentation")
 _meter = metrics.get_meter("agentops.instrumentation")
 
+# Current-agent ContextVar so llm_call / tool_call / flow_checkpoint can
+# tag their metrics with `agent={orchestrator,researcher,synthesizer}`
+# without the caller having to thread the name through every signature.
+# `plan_step` sets it on enter, resets on exit.
+import contextvars  # noqa: E402
+
+_current_agent: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "agentops_current_agent", default="unknown"
+)
+
 # Counters that the Prometheus dashboards key off. Created up-front so the
 # metric stream is non-empty even before the first failure.
 _llm_invocations = _meter.create_counter(
@@ -158,21 +168,25 @@ def plan_step(agent_name: str, intent: str) -> Iterator[trace.Span]:
     Jaeger waterfall reads as `orchestrator.plan -> researcher.search ->
     synthesizer.compose`.
     """
-    with _tracer.start_as_current_span(
-        f"plan_step.{agent_name}",
-        attributes={
-            "agentops.kind": "plan_step",
-            "agentops.agent": agent_name,
-            "agentops.intent": intent,
-        },
-    ) as span:
-        _plan_steps.add(1, {"agent": agent_name, "intent": intent})
-        try:
-            yield span
-        except Exception as exc:
-            span.set_status(Status(StatusCode.ERROR, str(exc)))
-            span.record_exception(exc)
-            raise
+    token = _current_agent.set(agent_name)
+    try:
+        with _tracer.start_as_current_span(
+            f"plan_step.{agent_name}",
+            attributes={
+                "agentops.kind": "plan_step",
+                "agentops.agent": agent_name,
+                "agentops.intent": intent,
+            },
+        ) as span:
+            _plan_steps.add(1, {"agent": agent_name, "intent": intent})
+            try:
+                yield span
+            except Exception as exc:
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+                raise
+    finally:
+        _current_agent.reset(token)
 
 
 @contextlib.contextmanager
@@ -206,20 +220,24 @@ def llm_call(
         try:
             yield result
         except Exception as exc:
+            agent = _current_agent.get()
             latency_ms = (time.perf_counter() - start) * 1000.0
             span.set_attribute("llm.latency_ms", latency_ms)
             span.set_attribute("llm.finish_reason", "error")
-            _llm_latency.record(latency_ms, {"model": model})
-            _llm_invocations.add(1, {"model": model, "outcome": "error"})
+            span.set_attribute("agentops.agent", agent)
+            _llm_latency.record(latency_ms, {"model": model, "agent": agent})
+            _llm_invocations.add(1, {"model": model, "outcome": "error", "agent": agent})
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
             raise
         else:
+            agent = _current_agent.get()
             latency_ms = (time.perf_counter() - start) * 1000.0
             span.set_attribute("llm.latency_ms", latency_ms)
             span.set_attribute("llm.prompt_tokens", result["prompt_tokens"])
             span.set_attribute("llm.completion_tokens", result["completion_tokens"])
             span.set_attribute("llm.finish_reason", result["finish_reason"])
+            span.set_attribute("agentops.agent", agent)
             if capture_payload:
                 span.add_event(
                     "llm.completion",
@@ -228,10 +246,10 @@ def llm_call(
             outcome = "ok" if result["finish_reason"] != "error" else "error"
             if result["completion_tokens"] == 0 and result["finish_reason"] == "stop":
                 outcome = "empty"  # the simulated empty-response failure mode
-            _llm_invocations.add(1, {"model": model, "outcome": outcome})
-            _llm_prompt_tokens.add(result["prompt_tokens"], {"model": model})
-            _llm_completion_tokens.add(result["completion_tokens"], {"model": model})
-            _llm_latency.record(latency_ms, {"model": model})
+            _llm_invocations.add(1, {"model": model, "outcome": outcome, "agent": agent})
+            _llm_prompt_tokens.add(result["prompt_tokens"], {"model": model, "agent": agent})
+            _llm_completion_tokens.add(result["completion_tokens"], {"model": model, "agent": agent})
+            _llm_latency.record(latency_ms, {"model": model, "agent": agent})
 
 
 @contextlib.contextmanager
@@ -260,10 +278,18 @@ def tool_call(tool_name: str) -> Iterator[dict[str, Any]]:
             span.set_attribute("tool.success", False)
             span.set_attribute("tool.error_type", type(exc).__name__)
             span.set_attribute("tool.args_json", _safe_json(result.get("args", {})))
+            agent = _current_agent.get()
+            span.set_attribute("agentops.agent", agent)
             _tool_invocations.add(
-                1, {"tool": tool_name, "outcome": "error", "error": type(exc).__name__}
+                1,
+                {
+                    "tool": tool_name,
+                    "outcome": "error",
+                    "error": type(exc).__name__,
+                    "agent": agent,
+                },
             )
-            _tool_latency.record(latency_ms, {"tool": tool_name})
+            _tool_latency.record(latency_ms, {"tool": tool_name, "agent": agent})
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
             raise
@@ -275,8 +301,10 @@ def tool_call(tool_name: str) -> Iterator[dict[str, Any]]:
             span.set_attribute(
                 "tool.response_json", _safe_json(result.get("response"))
             )
-            _tool_invocations.add(1, {"tool": tool_name, "outcome": "ok"})
-            _tool_latency.record(latency_ms, {"tool": tool_name})
+            agent = _current_agent.get()
+            span.set_attribute("agentops.agent", agent)
+            _tool_invocations.add(1, {"tool": tool_name, "outcome": "ok", "agent": agent})
+            _tool_latency.record(latency_ms, {"tool": tool_name, "agent": agent})
 
 
 def flag_hallucination(reason: str, evidence: str, agent: str = "unknown") -> None:
@@ -310,13 +338,31 @@ def flow_checkpoint(name: str, payload: dict[str, Any] | None = None) -> None:
     flow-discovery analyzer can group these by trace_id to reconstruct the
     *actual* graph and diff it against an *expected* one.
     """
+    agent = _current_agent.get()
     span = trace.get_current_span()
     if span is not None and span.is_recording():
-        attrs: dict[str, Any] = {"agentops.flow.checkpoint": name}
+        attrs: dict[str, Any] = {
+            "agentops.flow.checkpoint": name,
+            "agentops.agent": agent,
+        }
         if payload:
             attrs["agentops.flow.payload"] = _safe_json(payload)
         span.add_event("agentops.flow.checkpoint", attributes=attrs)
-    _flow_checkpoints.add(1, {"checkpoint": name})
+        # Also emit a structured log so Loki can do per-trace sequence
+        # reconstruction (paper 2's flow-discovery requires this — span
+        # events alone live in Jaeger, not Loki). The trace_id correlates
+        # back to the parent span for cross-store joins.
+        span_ctx = span.get_span_context()
+        logging.getLogger("agentops.flow").info(
+            "flow_checkpoint",
+            extra={
+                "agentops_agent": agent,
+                "agentops_checkpoint": name,
+                "agentops_trace_id": format(span_ctx.trace_id, "032x"),
+                "agentops_span_id": format(span_ctx.span_id, "016x"),
+            },
+        )
+    _flow_checkpoints.add(1, {"checkpoint": name, "agent": agent})
 
 
 def _safe_json(value: Any) -> str:
