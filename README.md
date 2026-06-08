@@ -8,6 +8,14 @@ A complete OpenTelemetry stack — collector, Jaeger, Prometheus, Loki, Grafana
 the papers argue an agent system needs to be safe in production. Clone it,
 `docker compose up`, open Grafana, watch agents work in real time.
 
+> **This repository was authored end-to-end by [docent][docent] — an
+> explanation-film engine that takes a curated knowledge-base directory and
+> renders a narrated lunch-and-learn film.** The whole stack you see here,
+> from the docker-compose to the 5,806-word operator runbook, was produced
+> by parallel-DAG worktree-isolated agents under docent's orchestration.
+> The companion film is at `out/agentops-lunch-and-learn.mp4` in the docent
+> repo. See [§ How this was built](#how-this-was-built).
+
 ## Quick start
 
 ```bash
@@ -155,6 +163,115 @@ workload (one query every ~3-5 s):
 Comfortable to leave running all day on a 16 GB machine while you work on
 other things.
 
+## Operator runbook
+
+The `runbook/` directory is the engineering-team operator manual a senior SRE
+would hand a new on-call. Seven pages, 5,806 words:
+
+1. **[00-readme.md](runbook/00-readme.md)** — index + paper attribution
+2. **[01-architecture-overview.md](runbook/01-architecture-overview.md)** —
+   why this stack, why this shape, why each component is decoupled
+3. **[02-the-agentops-taxonomy.md](runbook/02-the-agentops-taxonomy.md)** —
+   the five span types (paper 1) and what each captures
+4. **[03-flow-discovery-analytics.md](runbook/03-flow-discovery-analytics.md)**
+   — runtime log-based flow derivation (paper 2's 79% finding)
+5. **[04-evaluation-harness.md](runbook/04-evaluation-harness.md)** —
+   the five evaluation perspectives (paper 3) mapped to dashboard panels
+6. **[05-instrumenting-your-agents.md](runbook/05-instrumenting-your-agents.md)**
+   — how to add AgentOps spans to a new agent (the canonical attribute
+   convention is locked here)
+7. **[06-reading-the-dashboards.md](runbook/06-reading-the-dashboards.md)** —
+   panel-by-panel tour of all four Grafana dashboards with red-flag thresholds
+8. **[07-incident-response.md](runbook/07-incident-response.md)** —
+   the runbook the on-call follows: latency spike, hallucination spike,
+   cost burn-through. Each scenario has a triage tree and a concrete close.
+
+## Architecture diagrams
+
+High-resolution (≥1920×1080) PNG renders + Mermaid sources, suitable for
+slide decks, the runbook, or docent's `figure` scene annotation:
+
+- **[01-stack-architecture.png](diagrams/01-stack-architecture.png)** —
+  the docker-compose stack
+- **[02-span-taxonomy.png](diagrams/02-span-taxonomy.png)** — the five
+  AgentOps span types and how they nest
+- **[03-flow-discovery.png](diagrams/03-flow-discovery.png)** — the
+  four-stage flow-discovery pipeline (paper 2)
+- **[04-evaluation-pentagon.png](diagrams/04-evaluation-pentagon.png)** —
+  the five evaluation perspectives mapped to dashboards (paper 3)
+
+## State of the art
+
+What makes this stack worth standing up over a generic OTel demo:
+
+- **AgentOps span taxonomy.** Most OTel deployments capture HTTP request
+  spans. This stack captures the *agent-shaped* spans the papers say a
+  multi-agent system needs: `plan_step` as the parent intent, `llm_call`
+  with prompt/completion token counts and finish reason, `tool_call` with
+  args/response/success/error_kind, plus first-class hallucination flags as
+  span events. The instrumentation lives in
+  [`agents/instrumentation.py`](agents/instrumentation.py) and the locked
+  attribute convention is in
+  [`runbook/05-instrumenting-your-agents.md`](runbook/05-instrumenting-your-agents.md).
+
+- **Flow discovery, not just trace search.** Per paper 2, every agent step
+  emits a `flow_checkpoint(name)` span event. A Prometheus recording rule
+  computes `agentops:flow_stability_ratio` (the fraction of traces matching
+  the top-1 happy path), surfaced in dashboard 4 alongside the Jaeger
+  node-graph view of the orchestrator → researcher / synthesizer call
+  graph. When agent behavior drifts (a model update, a prompt regression,
+  a tool change), the stability score drops *before* user-visible failures.
+
+- **Cost-efficiency dashboard, not just throughput.** Per paper 3's
+  cost-efficiency dimension, dashboard 2 (`llm-cost-budget`) computes
+  token spend per trace, attributes it per agent, projects burn-down
+  against a configurable daily budget Grafana variable, and turns red
+  when projected spend exceeds budget. Bring-your-own per-model rate.
+
+- **Dashboards as code.** All four dashboards live as JSON under
+  `grafana/provisioning/dashboards/`, auto-loaded on container start. No
+  hand-clicking in the UI, no drift between environments, every change
+  visible in git diff.
+
+- **Hermetic operation.** The agent fleet uses a deterministic fake LLM
+  (`agents/fake_llm.py`) so the stack runs without a single API call. The
+  span shape is identical to a real OpenAI/Anthropic-backed fleet —
+  swapping in a real provider is a one-line change in `fake_llm.py`.
+
+- **Recording rules + LogQL queries documented.** The non-trivial
+  flow-discovery metric and the cost-attribution queries live in
+  [`grafana/recording-rules.md`](grafana/recording-rules.md) with their
+  exact PromQL + LogQL bodies, so a copy of this stack into a different
+  observability backend (Datadog, Honeycomb, New Relic) has a clear port
+  surface.
+
+## How this was built
+
+This repo was authored by [**docent**][docent] — an explanation-film engine
+that turns a curated knowledge-base directory into a narrated, animated
+lunch-and-learn film. The workflow:
+
+1. **Survey.** docent's explainer mode (`--mode ex`) walks a directory like
+   this one. The §10 "FDE / SRE / knowledge-base context" section of
+   `survey-explainer.md` enforces the rhetorical bar: identify the
+   misconception the film must kill, name the hero diagram, name the hero
+   demo, surface the "when this doesn't apply" tension.
+2. **Treatment.** docent scaffolds a plain-English treatment markdown the
+   author edits — the human-in-the-loop checkpoint.
+3. **Spec compile.** `docent treatment <id> --to-spec` reads the treatment's
+   asset-binding syntax (`figure: 02-span-taxonomy.png — annotate the
+   nested span tree`) and emits a film spec.
+4. **Render.** `docent build <id>` produces an MP4 with TTS narration,
+   choreographed visualization, scene-aware music ducking, and broadcast-
+   compliant LUFS normalization.
+
+The companion lunch-and-learn film for this repo is at
+`out/agentops-lunch-and-learn.mp4` in the docent project. It walks an
+engineering team through how this stack is engineered, talks through the
+Grafana dashboards, and closes with the incident-response decision tree.
+
+[docent]: https://github.com/benelser/archcast
+
 ## Layout
 
 ```
@@ -164,18 +281,38 @@ agentops/
 ├── otel-collector-config.yaml
 ├── prometheus.yml
 ├── grafana/
+│   ├── recording-rules.md                  # the non-trivial PromQL + LogQL
 │   └── provisioning/
 │       ├── datasources/datasources.yaml
-│       └── dashboards/dashboards.yaml      # provider; JSONs land here in R13.2
-└── agents/
-    ├── pyproject.toml
-    ├── Dockerfile
-    ├── instrumentation.py                  # AgentOps taxonomy span helpers
-    ├── fake_llm.py                         # deterministic LLM + tools
-    ├── orchestrator.py
-    ├── researcher.py
-    ├── synthesizer.py
-    └── workload.py                         # the continuous driver
+│       └── dashboards/
+│           ├── dashboards.yaml             # provider
+│           ├── 01-agent-overview.json
+│           ├── 02-llm-cost-budget.json
+│           ├── 03-tool-call-success.json
+│           └── 04-flow-discovery.json
+├── agents/
+│   ├── pyproject.toml
+│   ├── Dockerfile
+│   ├── instrumentation.py                  # AgentOps taxonomy span helpers
+│   ├── fake_llm.py                         # deterministic LLM + tools
+│   ├── orchestrator.py
+│   ├── researcher.py
+│   ├── synthesizer.py
+│   └── workload.py                         # the continuous driver
+├── runbook/                                # 7 pages, 5,806 words
+│   ├── 00-readme.md
+│   ├── 01-architecture-overview.md
+│   ├── 02-the-agentops-taxonomy.md
+│   ├── 03-flow-discovery-analytics.md
+│   ├── 04-evaluation-harness.md
+│   ├── 05-instrumenting-your-agents.md
+│   ├── 06-reading-the-dashboards.md
+│   └── 07-incident-response.md
+└── diagrams/                               # 4 PNG (≥1920×1080) + .mmd sources
+    ├── 01-stack-architecture.{mmd,png}
+    ├── 02-span-taxonomy.{mmd,png}
+    ├── 03-flow-discovery.{mmd,png}
+    └── 04-evaluation-pentagon.{mmd,png}
 ```
 
 ## Teardown
