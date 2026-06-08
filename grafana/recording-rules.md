@@ -1,222 +1,233 @@
-# AgentOps recording rules & collector pipeline notes
+# AgentOps recording rules, gaps, and instrumentation TODOs
 
-The four dashboards under `grafana/provisioning/dashboards/` reference a handful
-of metrics that are **not native** to a default `spanmetrics` pipeline. This
-file is the canonical list — every metric named here is a contract between the
-dashboards and R13.1's otel-collector / Prometheus config.
-
-If a query in a dashboard returns "No data", check this file first; the rule
-or processor may not be wired yet.
+The four dashboards under `grafana/provisioning/dashboards/` are written
+against the metric names **R13.1's agents actually emit today** (see
+`agents/instrumentation.py`). This file documents (a) the panels that are
+fully live against the current pipeline, (b) the small instrumentation
+changes that would close remaining gaps, and (c) the recording rules R13.1
+would need to load in `prometheus.yml` to unlock the more advanced
+flow-discovery panels.
 
 ---
 
-## Metrics that come "for free" from the spanmetrics processor
+## What's emitted today (agents/instrumentation.py)
 
-These need only a `spanmetricsconnector` (or the legacy `spanmetrics`
-processor) in the collector pipeline. Names assume the default
-`namespace: agent` and a per-attribute dimension list including
-`agent.name`, `llm.model`, `tool.name`, `tool.success`, `tool.error_type`,
-`status.code`. Concretely the collector should configure:
-
-```yaml
-connectors:
-  spanmetrics:
-    namespace: agent
-    histogram:
-      explicit:
-        buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s]
-    dimensions:
-      - name: agent.name
-        default: unknown
-      - name: status.code
-        default: ok
+```
+agentops_llm_invocations_total           {model, outcome}        outcome=ok|error|empty
+agentops_llm_prompt_tokens_total         {model}
+agentops_llm_completion_tokens_total     {model}
+agentops_llm_latency_ms_bucket           {model, le}             unit: ms (histogram)
+agentops_tool_invocations_total          {tool, outcome, error}  outcome=ok|error
+agentops_tool_latency_ms_bucket          {tool, le}              unit: ms (histogram)
+agentops_hallucination_events_total      {agent, reason}
+agentops_plan_steps_total                {agent, intent}
+agentops_flow_checkpoints_total          {checkpoint}            # NO agent label
 ```
 
-Resulting metrics referenced by dashboards:
+Resource attributes attached to every metric (via OTel resource processor):
 
-- `agent_request_duration_seconds_bucket{agent,status,le}`
-- `agent_request_duration_seconds_count{agent,status}`
-- `agent_request_duration_seconds_sum{agent,status}`
+```
+service_name="agent-fleet"
+service_namespace="agentops"
+deployment_environment="demo"
+telemetry_source="agentops-collector"
+```
 
-**Note for R13.1:** the spanmetricsconnector emits `_milliseconds` units by
-default in some versions. The dashboards assume `_seconds`. Either configure
-`unit: s` on the connector, or rename my dashboard queries — flag this back to
-me if you pick the latter.
-
----
-
-## Counters R13.1 emits directly (no spanmetrics needed)
-
-The agent code creates these via the OTel Metrics API and exports them
-through the same OTLP pipe; the collector forwards to Prometheus.
-
-- `llm_tokens_total{agent,model,kind}` — `kind` is `prompt` or `completion`.
-- `tool_calls_total{agent,tool,success,error_type}` — `success` is the
-  *string* `"true"` / `"false"` (Prometheus label, not bool). `error_type` is
-  empty/absent on success.
-- `hallucinations_total{agent,reason}`
-- `tool_call_duration_seconds_bucket{agent,tool,le}` — histogram for the
-  P95-by-tool panel and the heatmap.
-
-If any of these don't exist in the agent code yet, the relevant panels show
-"No data". The agent-fleet contract owner should treat these as the minimum
-emit set.
+Spans carry the agent's name on the `agentops.agent` attribute (plan_step
+spans) and via the span name (`tool_call.search`, etc.). The agent name
+**is not** propagated onto LLM / tool / flow_checkpoint metrics — see
+the gap section.
 
 ---
 
-## Flow discovery — the non-trivial metrics
+## Gaps the dashboards highlight
 
-The four flow-discovery panels need a notion of **"the sequence of
-`flow.checkpoint` values for a given trace"**. There is no built-in OTel
-processor that emits this — span attributes are per-span, not per-trace.
-Three places we could compute it:
+Every dashboard description block names the panels that approximate the spec
+because of a missing label. The fixes are short:
 
-### Option A (chosen): Loki structured logs + LogQL aggregation
+### Gap 1: `agentops_flow_checkpoints_total` is missing the `agent` label
 
-Every span carrying a `flow.checkpoint` attribute also writes a structured
-log line via the agent's logger — that log line is shipped to Loki with the
-fields `{trace_id, agent, checkpoint, ts}`. The flow-discovery dashboard's
-"Top-N flows" and "Flow divergence" panels use a LogQL query like:
+Dashboard 4 ("Mean checkpoints per trace, by agent") falls back to a
+fleet-wide value. Fix:
 
-```logql
-sum by (sequence) (
-  count_over_time(
-    {service_name="agent-fleet"}
-      | json
-      | __error__=""
-      | line_format "{{.trace_id}}|{{.checkpoint}}"
-    [1h]
-  )
+```python
+# instrumentation.py::flow_checkpoint, line 319
+_flow_checkpoints.add(1, {"checkpoint": name, "agent": _current_agent()})
+```
+
+where `_current_agent()` reads the in-context agent name (a `ContextVar`
+set by `plan_step`, or pulled off the active span's `agentops.agent`
+attribute).
+
+### Gap 2: LLM token/latency counters are missing the `agent` label
+
+Dashboard 1 P95-by-agent falls back to per-model. Dashboard 2 per-agent token
+attribution becomes activity-share via `plan_steps_total`. Fix:
+
+```python
+# instrumentation.py::llm_call, lines 232-234
+_llm_prompt_tokens.add(result["prompt_tokens"], {"model": model, "agent": _current_agent()})
+_llm_completion_tokens.add(result["completion_tokens"], {"model": model, "agent": _current_agent()})
+_llm_latency.record(latency_ms, {"model": model, "agent": _current_agent()})
+```
+
+### Gap 3: tool counters are missing the `agent` label
+
+Dashboard 1 "failures by agent + error_type" falls back to "failures by tool
++ error_type". Same fix pattern.
+
+### Gap 4: no per-trace structured log line for checkpoints
+
+Dashboard 4's sequence-aware panels (true Top-N flows, true divergence rate)
+need each `flow_checkpoint()` call to write a structured log record that
+Loki ingests with `{trace_id, agent, checkpoint}` keys. The OTel log handler
+is already wired (`instrumentation.py:88-94`), so it's one line:
+
+```python
+# instrumentation.py::flow_checkpoint, after line 318
+logging.getLogger("agentops.flow").info(
+    "checkpoint",
+    extra={
+        "trace_id": format(span.get_span_context().trace_id, "032x") if span else "",
+        "agent": _current_agent(),
+        "checkpoint": name,
+    },
 )
 ```
 
-…and a Grafana **transformation** (`groupBy` → `concat`) reshapes the rows
-into one-row-per-trace, sequence string.
-
-Trade-off: Loki transformations cost CPU on the Grafana side; OK for ~1k
-traces/h, painful at 100k.
-
-### Option B: Prometheus recording rule on a custom span event counter
-
-R13.1 adds an OTel processor that, for each *root* span, emits a single
-metric sample with a synthetic label `sequence` derived from the ordered
-checkpoint list. The collector config would need a custom transform
-processor — sketched below. The resulting Prometheus series is then
-trivially queryable as `topk(10, sum by (sequence)
-(rate(flow_sequence_total[1h])))`.
-
-This is cleaner at query time but requires R13.1 to write a transform
-processor (not built-in). TODO until the collector grows the capability.
-
-### Option C: Prometheus recording rule on a span event counter
-
-If R13.1 adds a `flow_checkpoint_total{agent,checkpoint}` counter (one
-increment per checkpoint event), Prometheus can compute *per-agent mean
-checkpoints per trace* via a recording rule, but **cannot** reconstruct the
-ordered sequence — the order is lost when buckets are summed.
-
-So the dashboard uses C for the "mean checkpoints per trace, by agent" bar
-gauge, and A for the sequence-aware panels.
+Then the recording rule below becomes viable.
 
 ---
 
-## Concrete recording rules
+## Recording rules to load via prometheus.yml
 
-Add these to `prometheus.yml` under `rule_files:`, then drop the file in
-`/etc/prometheus/rules/`. R13.1: please wire this in.
+R13.1: add this to `prometheus.yml` once Gaps 1-4 are closed.
 
 ```yaml
+# prometheus.yml — add at top level
+rule_files:
+  - /etc/prometheus/rules/*.yml
+```
+
+…and mount `./prometheus-rules:/etc/prometheus/rules:ro` in
+`docker-compose.yml`. The rule file:
+
+```yaml
+# prometheus-rules/agentops.yml
 groups:
   - name: agentops_flow
     interval: 30s
     rules:
-      # Mean checkpoints per trace, per agent. Trace_id is on the span; the
-      # collector emits flow_checkpoint_total with attribute agent and
-      # exemplar trace_id. We approximate "per trace" as
-      # increase(checkpoints) / increase(distinct trace starts) where a
-      # trace start is the root span (status=ok or status=error).
-      - record: agent:flow_checkpoints_per_trace_1h
+      # Once flow_checkpoints carries `agent`, this becomes the bar gauge
+      # in dashboard 4.
+      - record: agent:flow_checkpoints_per_plan_step_1h
         expr: |
-          sum by (agent) (increase(flow_checkpoint_total[1h]))
+          sum by (agent) (increase(agentops_flow_checkpoints_total[1h]))
           /
-          clamp_min(
-            sum by (agent) (increase(agent_request_duration_seconds_count{span_kind="server"}[1h])),
-            1
-          )
+          clamp_min(sum by (agent) (increase(agentops_plan_steps_total[1h])), 1)
 
-      # Total flow-checkpointed traces in the last hour. Used as the
-      # denominator for the stability score.
-      - record: agent:flow_traces_1h
-        expr: |
-          sum(increase(agent_request_duration_seconds_count{span_kind="server"}[1h]))
-
-      # Flow stability score: 1 - (distinct sequences / total traces).
-      # The numerator depends on a separate Loki ruler that materializes
-      # flow_distinct_sequences_1h from the per-trace checkpoint logs
-      # (see Option A in this file). Until the Loki ruler is wired, this
-      # rule is a no-op and the dashboard will read NaN.
+      # Sequence stability score. Depends on a Loki ruler that materializes
+      # `flow_distinct_sequences_1h` from per-trace checkpoint logs (gap 4).
+      # Until then, dashboard 4's stat falls back to a Prometheus-only proxy
+      # written inline in the panel.
       - record: agent:flow_stability_score_1h
         expr: |
           1 - (
             flow_distinct_sequences_1h
             /
-            clamp_min(agent:flow_traces_1h, 1)
+            clamp_min(
+              sum(increase(agentops_plan_steps_total{intent=~"handle_query.*"}[1h])),
+              1
+            )
           )
 
   - name: agentops_cost
     interval: 60s
     rules:
-      # Pre-aggregated USD/sec, for the per-second burn-down chart.
-      # Rates are baked at recording time using sensible defaults; for the
-      # configurable variant the dashboard still computes USD inline.
-      - record: agent:llm_cost_usd_per_second
+      # Pre-aggregated USD/sec for the burn-down chart. Hard-codes the
+      # default rates (0.01/0.03 per 1K). Dashboard 2 still computes spend
+      # inline so the rates can be tweaked from the UI.
+      - record: agent:llm_cost_usd_per_second_default_rates
         expr: |
-          (sum(rate(llm_tokens_total{kind="prompt"}[5m])) / 1000) * 0.01
+          (sum(rate(agentops_llm_prompt_tokens_total[5m])) / 1000) * 0.01
           +
-          (sum(rate(llm_tokens_total{kind="completion"}[5m])) / 1000) * 0.03
+          (sum(rate(agentops_llm_completion_tokens_total[5m])) / 1000) * 0.03
 ```
 
 ---
 
-## Collector pipeline sketch (for R13.1)
+## Loki ruler — for true per-trace sequence reconstruction (gap 4 fix)
 
-The flow-checkpoint counter and the structured log line both need a small
-custom processor in the collector. Pseudo-config:
+Once Gap 4 lands (structured logs include `trace_id` + `checkpoint`), Loki
+can materialize a `flow_distinct_sequences_1h` *Prometheus* metric via its
+ruler. That metric is what `agent:flow_stability_score_1h` consumes.
+
+A sketch (Loki recording rule, dropped in Loki's ruler config):
 
 ```yaml
-processors:
-  attributes/checkpoint-counter:
-    actions:
-      - key: flow.checkpoint
-        action: extract
-        pattern: ^(?P<checkpoint>.+)$
-
-  # Spanevent-to-metric: emit one flow_checkpoint_total per span that
-  # carries a flow.checkpoint attribute. Requires the
-  # spanmetricsconnector v0.114+ which supports event-as-metric.
-  spanevents:
-    enabled: true
-    metric_name: flow_checkpoint_total
-    dimensions:
-      - agent.name
-      - flow.checkpoint
+# loki-rules/agentops.yml
+groups:
+  - name: agentops_flow_loki
+    interval: 60s
+    rules:
+      # Number of distinct (trace_id, sequence) tuples in the last hour. The
+      # sequence label is constructed by `label_format` from the concatenated
+      # ordered checkpoint events per trace_id; Loki's `label_join` /
+      # `label_format` aggregators in v3.x give us enough to do this in a
+      # single ruler pass.
+      - record: flow_distinct_sequences_1h
+        expr: |
+          count(count by (sequence) (
+            sum by (trace_id, sequence) (
+              count_over_time(
+                {service_name="agent-fleet"}
+                  | json
+                  | checkpoint != ""
+                  | label_format sequence=`{{.checkpoint}}`
+                [1h]
+              )
+            )
+          ))
 ```
 
-And the agent code must call `logger.info(...)` with the same structured
-fields whenever it sets `flow.checkpoint`, so the Loki side gets the same
-data the Prometheus side does.
+Loki's ruler runs the LogQL and writes the result back to Prometheus via the
+remote_write endpoint. The cleaner alternative — a custom OTel collector
+processor that builds the sequence per root span — is documented below but
+not implemented.
 
 ---
 
-## TODO list for R13.1
+## Alternative: custom collector processor (sketch only)
 
-- [ ] `spanmetricsconnector` configured with `agent.name` and `status.code`
-      dimensions, emitting `agent_request_duration_seconds_*` in seconds.
-- [ ] Direct counters: `llm_tokens_total`, `tool_calls_total`,
-      `hallucinations_total`, `tool_call_duration_seconds`.
-- [ ] `flow_checkpoint_total{agent,checkpoint}` counter via spanevents.
-- [ ] Loki ingestion of agent structured logs with `{trace_id, agent,
-      checkpoint}` fields.
-- [ ] Prometheus `rule_files` block loading the recording rules above.
+If we ever want sequence reconstruction without Loki, the collector grows a
+small custom processor:
 
-When all five are checked, every panel in every dashboard renders real data.
+```yaml
+# otel-collector-config.yaml, hypothetical addition
+processors:
+  span_sequence:
+    # For each root span, walk children in temporal order, collect
+    # `agentops.flow.checkpoint` event names, emit one metric with
+    # label sequence="orchestrator.start|researcher.start|...".
+    metric_name: flow_sequence_total
+    dimensions:
+      - service.name
+```
+
+Not built-in to the contrib collector today (as of v0.118.0). Listed as a
+future-work item.
+
+---
+
+## TODO checklist for R13.1
+
+- [ ] **Gap 1:** add `agent` label to `agentops_flow_checkpoints_total`.
+- [ ] **Gap 2:** add `agent` label to `agentops_llm_{prompt,completion}_tokens_total` and `agentops_llm_latency_ms`.
+- [ ] **Gap 3:** add `agent` label to `agentops_tool_invocations_total` and `agentops_tool_latency_ms`.
+- [ ] **Gap 4:** emit a structured log line from `flow_checkpoint()` carrying `{trace_id, agent, checkpoint}`.
+- [ ] **Recording rules:** add `rule_files:` to `prometheus.yml` and mount the rules file.
+- [ ] **Loki ruler:** add the Loki ruler config block so it can write `flow_distinct_sequences_1h` back to Prometheus.
+
+When the first four are checked, every panel in every dashboard shows real
+data. Items 5-6 unlock the "production-grade" variants of the flow-stability
+score (dashboard 4) and the per-agent cost burn-down (dashboard 2).

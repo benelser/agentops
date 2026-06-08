@@ -139,10 +139,21 @@ edit.
 
 ## Resource footprint
 
-On a 16 GB MacBook the whole stack at idle uses **~1.3 GB RAM** and **<5%
-CPU** averaged across cores. Under the demo workload (one query every
-~3-5 s) it climbs to **~1.8 GB RAM / ~12% CPU**. Comfortable to leave running
-all day while you work on other things.
+Measured on a 16 GB MacBook (Docker Desktop, 8 GB allocated) under live
+workload (one query every ~3-5 s):
+
+| Container          | CPU    | RSS      |
+|--------------------|--------|----------|
+| otel-collector     | 0.1%   | 53 MiB   |
+| jaeger             | 0.05%  | 26 MiB   |
+| prometheus         | 0.8%   | 37 MiB   |
+| loki               | 0.5%   | 48 MiB   |
+| grafana            | 0.3%   | 66 MiB   |
+| agent-fleet        | 0.4%   | 50 MiB   |
+| **Total**          | **~2%**| **~280 MiB** |
+
+Comfortable to leave running all day on a 16 GB machine while you work on
+other things.
 
 ## Layout
 
