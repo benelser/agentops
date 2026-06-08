@@ -22,3 +22,8 @@ Thumbs.db
 # Secrets (in case)
 .env
 .env.local
+recordings/node_modules/
+recordings/bun.lock
+recordings/package.json
+recordings/_raw_*
+recordings/*.mjs
