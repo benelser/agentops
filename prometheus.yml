@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: agentops
+
+scrape_configs:
+  # The collector itself — surfaces collector pipeline metrics.
+  - job_name: otel-collector-self
+    static_configs:
+      - targets: ["otel-collector:8888"]
+
+  # All metrics forwarded from agents land here (the prometheus exporter
+  # endpoint inside the collector).
+  - job_name: otel-collector-forwarded
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # Prometheus's own metrics — useful for the demo "up" query.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

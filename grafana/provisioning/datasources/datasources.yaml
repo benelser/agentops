@@ -1,0 +1,57 @@
+# Grafana datasource provisioning for AgentOps.
+#
+# Three datasources, one each for the telemetry pillars:
+#   - Prometheus :9090  -> metrics (spanmetrics + agent-emitted counters)
+#   - Jaeger    :16686 -> distributed traces
+#   - Loki      :3100  -> structured logs, trace_id-correlated
+#
+# Service names resolve over the `agentops` docker network (see docker-compose.yml).
+# Explicit UIDs (prometheus/loki/jaeger) so dashboards-as-code can reference
+# datasources by a stable name across Grafana restarts.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 5s
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: jaeger
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - datasourceUid: jaeger
+          matcherRegex: "trace_id=(\\w+)"
+          name: TraceID
+          url: "$${__value.raw}"
+
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: true
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -1m
+        spanEndTimeShift: 1m
+        filterByTraceID: true
+      tracesToMetrics:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

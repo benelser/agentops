@@ -1,0 +1,104 @@
+# OpenTelemetry Collector pipeline for the AgentOps demo.
+#
+# Three pipelines:
+#   traces  -> jaeger (otlp)
+#   metrics -> prometheus (pull, on :8889)
+#   logs    -> loki (otlphttp)
+#
+# Receivers + processors are shared so the agent fleet only ever speaks OTLP.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Bound memory so a runaway agent loop doesn't OOM the collector.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Batch before export — recommended by all backends to amortize cost.
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+  # Tag every signal with the resource attributes that dashboards filter on.
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: demo
+        action: upsert
+      - key: telemetry.source
+        value: agentops-collector
+        action: upsert
+
+  # The agent fleet runs as one Python process, so OTel's single TracerProvider
+  # tags every span with the same service.name. To split traces by agent in
+  # Jaeger (orchestrator / researcher / synthesizer), we (1) copy each span's
+  # `agentops.agent` attribute onto its own `service.name` attribute, then
+  # (2) groupbyattrs re-groups spans into per-service resources. This is the
+  # canonical OTel pattern for "one process, many logical services".
+  transform/agent_service_name:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["service.name"], attributes["agentops.agent"]) where attributes["agentops.agent"] != nil
+
+  groupbyattrs/by_service:
+    keys:
+      - service.name
+
+exporters:
+  # Jaeger speaks native OTLP gRPC on the remapped :14317 host port; on the
+  # docker network it's plain :4317.
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Prometheus *pulls* — the collector exposes a /metrics endpoint on :8889
+  # that the prometheus service is configured to scrape.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+    enable_open_metrics: true
+
+  # Loki receives log records as OTLP/HTTP.
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+  # Stdout debug for the demo (truncates noisy payloads).
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, transform/agent_service_name, groupbyattrs/by_service, batch]
+      exporters: [otlp/jaeger, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus, debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/loki, debug]

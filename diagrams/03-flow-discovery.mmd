@@ -1,0 +1,27 @@
+---
+title: Flow-discovery pipeline (per arXiv 2503.06745)
+---
+graph LR
+    classDef src fill:#1f3a5f,stroke:#7aa2d6,stroke-width:2px,color:#e8edf5
+    classDef proc fill:#3a2a5f,stroke:#b39ddb,stroke-width:2px,color:#e8edf5
+    classDef score fill:#2a4a3a,stroke:#7ad6a2,stroke-width:2px,color:#e8edf5
+    classDef alert fill:#5f1f2a,stroke:#d67a8a,stroke-width:2px,color:#e8edf5
+
+    T["Production traces<br/>each trace = ordered<br/>flow_checkpoint spans"]
+
+    E["Sequence extraction<br/>GROUP BY trace_id<br/>ORDER BY span.start<br/>-> [c1, c2, c3, ...]"]
+
+    C["Sequence clustering<br/>hash each sequence,<br/>weight by frequency<br/>top-k = happy paths"]
+
+    S["Stability score<br/>fraction of traces in<br/>top-k clusters over 1h<br/>recording rule"]
+
+    D["Divergence detector<br/>alert when<br/>stability < 0.85<br/>for 5 min"]
+
+    OC["on-call -> page<br/>+ link to Jaeger filter<br/>trace.id IN divergent_set"]
+
+    T --> E --> C --> S --> D --> OC
+
+    class T src
+    class E,C proc
+    class S score
+    class D,OC alert

@@ -1,0 +1,179 @@
+# AgentOps observability stack.
+#
+# Pins every image to a digest-equivalent tag so a clone-and-up six months from
+# now still produces the same dashboards. Bumping anything here means
+# re-running the 8 KPI checks in README.md.
+
+name: agentops
+
+services:
+  # ---------------------------------------------------------------------------
+  # OpenTelemetry Collector — the front door for all agent telemetry.
+  # Listens on OTLP gRPC :4317 and OTLP HTTP :4318, fans out to Jaeger (traces),
+  # Prometheus (metrics, pull), and Loki (logs).
+  # ---------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.118.0
+    container_name: agentops-otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus exporter (collector self-scraped + agent metrics)
+      - "13133:13133" # health_check
+    depends_on:
+      jaeger:
+        condition: service_started
+      loki:
+        condition: service_started
+    networks:
+      - agentops
+    # The contrib collector image is distroless — no shell, no wget. We rely on
+    # the OTLP receiver listening on 4318 as readiness from the agent fleet's
+    # point of view (the fleet's first export is what proves the collector is
+    # up; if the connection refuses, the BatchSpanProcessor will retry).
+
+  # ---------------------------------------------------------------------------
+  # Jaeger — trace storage + UI. all-in-one image is fine for a demo.
+  # OTLP receivers are enabled out of the box in 1.60+; we forward the
+  # collector's traces here over gRPC :4317 (mapped internally to 14317).
+  # ---------------------------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: agentops-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=memory
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14317:4317"   # OTLP gRPC (remapped so collector :4317 stays free)
+      - "14318:4318"   # OTLP HTTP
+    networks:
+      - agentops
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:14269/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # Prometheus — scrapes the collector's prometheus exporter (:8889) and its
+  # own self-metrics (:8888). Tightly scoped scrape_interval for liveness in a
+  # demo; bump for prod.
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: agentops-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - agentops
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # Loki — log aggregation. -config.file uses the bundled local-config.yaml,
+  # which is single-binary-mode + filesystem storage. Sufficient for a demo.
+  # ---------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: agentops-loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "3100:3100"
+    networks:
+      - agentops
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3100/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Grafana — datasources + dashboards are provisioned from ./grafana/.
+  # admin/admin is fine for a lunch-and-learn demo; flagged in README.
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: agentops-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_INSTALL_PLUGINS=
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+      jaeger:
+        condition: service_started
+    networks:
+      - agentops
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Agent fleet — orchestrator/researcher/synthesizer running a deterministic
+  # fake-LLM workload. Emits traces/metrics/logs over OTLP to the collector.
+  # ---------------------------------------------------------------------------
+  agent-fleet:
+    build:
+      context: ./agents
+      dockerfile: Dockerfile
+    container_name: agentops-agent-fleet
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_SERVICE_NAME=agent-fleet
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=demo
+      - WORKLOAD_INTERVAL_SECONDS=3
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8080:8080"  # /health
+    depends_on:
+      otel-collector:
+        condition: service_started
+    networks:
+      - agentops
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+networks:
+  agentops:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:

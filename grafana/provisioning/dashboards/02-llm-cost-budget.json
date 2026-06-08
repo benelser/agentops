@@ -1,0 +1,367 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "LLM token spend and budget burn-down (paper 3, cost-efficiency dimension). Per-agent token attribution is currently impossible from Prometheus alone — agentops_llm_{prompt,completion}_tokens_total carries only `model`. Per-agent panels approximate via plan_steps as the activity proxy. See recording-rules.md, friction note (2).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    { "title": "Agent Overview", "url": "/d/agentops-overview", "type": "link", "icon": "external link" },
+    { "title": "Tool Calls",     "url": "/d/agentops-tools",    "type": "link", "icon": "external link" },
+    { "title": "Flow Discovery", "url": "/d/agentops-flow",     "type": "link", "icon": "external link" }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total tokens (24h)",
+      "description": "Prompt + completion tokens consumed in the last 24 hours.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agentops_llm_prompt_tokens_total[24h])) + sum(increase(agentops_llm_completion_tokens_total[24h]))",
+          "legendFormat": "tokens",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Estimated spend (24h)",
+      "description": "Prompt tokens * $prompt_rate/1K + completion tokens * $completion_rate/1K. Rates are template variables (see Variables menu).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 50 }
+            ]
+          },
+          "unit": "currencyUSD",
+          "decimals": 2
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "(sum(increase(agentops_llm_prompt_tokens_total[24h])) / 1000) * $prompt_rate + (sum(increase(agentops_llm_completion_tokens_total[24h])) / 1000) * $completion_rate",
+          "legendFormat": "spend",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Daily budget",
+      "description": "Configured $budget/day. Set in Variables.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "unit": "currencyUSD",
+          "decimals": 2
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "vector($budget)",
+          "legendFormat": "budget",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Projected day spend",
+      "description": "Spend over the last 5m, extrapolated to 24h. Red when projection exceeds $budget.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 50 }
+            ]
+          },
+          "unit": "currencyUSD",
+          "decimals": 2
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "((sum(rate(agentops_llm_prompt_tokens_total[5m])) * 86400) / 1000) * $prompt_rate + ((sum(rate(agentops_llm_completion_tokens_total[5m])) * 86400) / 1000) * $completion_rate",
+          "legendFormat": "projected",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Tokens per minute, stacked by model",
+      "description": "Per-model token throughput (prompt + completion summed). Per-agent stack isn't available — see dashboard description.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "stacking": { "mode": "normal", "group": "A" }
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (model) (rate(agentops_llm_prompt_tokens_total[$__rate_interval])) * 60",
+          "legendFormat": "prompt {{model}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (model) (rate(agentops_llm_completion_tokens_total[$__rate_interval])) * 60",
+          "legendFormat": "completion {{model}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "piechart",
+      "title": "Activity share by agent (1h)",
+      "description": "Plan-step share — a proxy for which agent is doing the most work, since per-agent token attribution isn't on the counters. Cost-weighted variant available once per-agent token labels land.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "displayLabels": ["name", "percent"],
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (agent) (increase(agentops_plan_steps_total[1h]))",
+          "legendFormat": "{{agent}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "bargauge",
+      "title": "Avg tokens per LLM call, by model",
+      "description": "(prompt + completion) over (llm invocations), grouped by model. Per-agent variant blocked on label addition.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "expr": "(sum by (model) (increase(agentops_llm_prompt_tokens_total[1h])) + sum by (model) (increase(agentops_llm_completion_tokens_total[1h]))) / clamp_min(sum by (model) (increase(agentops_llm_invocations_total[1h])), 1)",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Burn-down vs. $budget/day",
+      "description": "Projected day-spend (rolling 5m rate * 86400) vs. configured $budget. Crosses red when projection > budget.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 50 }
+            ]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "budget" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "((sum(rate(agentops_llm_prompt_tokens_total[5m])) * 86400) / 1000) * $prompt_rate + ((sum(rate(agentops_llm_completion_tokens_total[5m])) * 86400) / 1000) * $completion_rate",
+          "legendFormat": "projected day spend",
+          "refId": "A"
+        },
+        {
+          "expr": "vector($budget)",
+          "legendFormat": "budget",
+          "refId": "B"
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["agentops", "cost", "paper-3"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "0.01", "value": "0.01" },
+        "description": "USD per 1K prompt tokens",
+        "label": "Prompt rate ($/1K)",
+        "name": "prompt_rate",
+        "options": [
+          { "selected": true,  "text": "0.01",  "value": "0.01" },
+          { "selected": false, "text": "0.003", "value": "0.003" },
+          { "selected": false, "text": "0.001", "value": "0.001" }
+        ],
+        "query": "0.01,0.003,0.001",
+        "type": "custom",
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "current": { "selected": false, "text": "0.03", "value": "0.03" },
+        "description": "USD per 1K completion tokens",
+        "label": "Completion rate ($/1K)",
+        "name": "completion_rate",
+        "options": [
+          { "selected": true,  "text": "0.03",  "value": "0.03" },
+          { "selected": false, "text": "0.015", "value": "0.015" },
+          { "selected": false, "text": "0.002", "value": "0.002" }
+        ],
+        "query": "0.03,0.015,0.002",
+        "type": "custom",
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "current": { "selected": true, "text": "50", "value": "50" },
+        "description": "Daily $ budget",
+        "label": "Daily budget ($)",
+        "name": "budget",
+        "options": [
+          { "selected": true,  "text": "50",  "value": "50" },
+          { "selected": false, "text": "100", "value": "100" },
+          { "selected": false, "text": "500", "value": "500" }
+        ],
+        "query": "50,100,500",
+        "type": "custom",
+        "hide": 0,
+        "skipUrlSync": false
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AgentOps - LLM Cost & Budget",
+  "uid": "agentops-cost",
+  "version": 1,
+  "weekStart": ""
+}

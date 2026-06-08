@@ -1,0 +1,37 @@
+---
+title: AgentOps span taxonomy (per arXiv 2411.05285)
+---
+graph TB
+    classDef plan fill:#3a2a5f,stroke:#b39ddb,stroke-width:2px,color:#e8edf5
+    classDef decision fill:#1f3a5f,stroke:#7aa2d6,stroke-width:2px,color:#e8edf5
+    classDef llm fill:#2a4a3a,stroke:#7ad6a2,stroke-width:2px,color:#e8edf5
+    classDef tool fill:#5f3a1f,stroke:#d6a27a,stroke-width:2px,color:#e8edf5
+    classDef event fill:#5f1f2a,stroke:#d67a8a,stroke-width:2px,color:#e8edf5,stroke-dasharray:4 3
+    classDef sibling fill:#222,stroke:#aaa,color:#ddd,stroke-dasharray:2 2
+
+    PS["plan_step span<br/>plan.id, plan.goal, plan.step_index<br/>(root of a reasoning trace)"]
+
+    AD["agent_decision span<br/>agent.name, decision.choice<br/>decision.options, decision.confidence"]
+
+    LLM["llm_call span<br/>llm.model, llm.prompt_tokens<br/>llm.completion_tokens, llm.latency_ms<br/>llm.temperature, llm.cost_usd"]
+
+    TC["tool_call span<br/>tool.name, tool.args (redacted)<br/>tool.success, tool.latency_ms<br/>tool.error.kind"]
+
+    HF["hallucination_flag event<br/>(attached to any span)<br/>hallucination.kind, hallucination.score<br/>hallucination.detector"]
+
+    FC["flow_checkpoint span<br/>(sibling, not nested)<br/>flow.checkpoint, flow.trace_id<br/>used for flow-discovery (paper 2)"]
+
+    PS --> AD
+    PS --> LLM
+    PS --> TC
+    LLM -. event .-> HF
+    TC -. event .-> HF
+    AD -. event .-> HF
+    PS -.- FC
+
+    class PS plan
+    class AD decision
+    class LLM llm
+    class TC tool
+    class HF event
+    class FC sibling

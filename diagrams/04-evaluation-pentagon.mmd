@@ -1,0 +1,37 @@
+---
+title: Five evaluation perspectives (per arXiv 2503.16416)
+---
+graph TB
+    classDef perspective fill:#3a2a5f,stroke:#b39ddb,stroke-width:3px,color:#e8edf5
+    classDef metric fill:#1f3a5f,stroke:#7aa2d6,stroke-width:1px,color:#e8edf5
+    classDef center fill:#2a4a3a,stroke:#7ad6a2,stroke-width:3px,color:#e8edf5
+
+    AGENT(("Agent<br/>under eval"))
+
+    P1["1. Planning<br/>score: 0.82<br/>plan_step depth,<br/>replan_rate"]
+    P2["2. Tool use<br/>score: 0.74<br/>tool_call success,<br/>arg_validity"]
+    P3["3. Generalist<br/>score: 0.68<br/>task coverage,<br/>OOD handling"]
+    P4["4. Robustness<br/>score: 0.71<br/>flow stability,<br/>hallucination rate"]
+    P5["5. Cost<br/>score: 0.55<br/>tokens/task,<br/>budget burn"]
+
+    M1["Dashboard: agent-overview<br/>plan_step depth panel"]
+    M2["Dashboard: tool-call-success<br/>success-rate by tool.name"]
+    M3["Dashboard: agent-overview<br/>task-type coverage panel"]
+    M4["Dashboard: flow-discovery<br/>stability_score gauge"]
+    M5["Dashboard: llm-cost-budget<br/>tokens & cost burn-down"]
+
+    AGENT --- P1
+    AGENT --- P2
+    AGENT --- P3
+    AGENT --- P4
+    AGENT --- P5
+
+    P1 --> M1
+    P2 --> M2
+    P3 --> M3
+    P4 --> M4
+    P5 --> M5
+
+    class AGENT center
+    class P1,P2,P3,P4,P5 perspective
+    class M1,M2,M3,M4,M5 metric

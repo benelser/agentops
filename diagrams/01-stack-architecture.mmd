@@ -1,0 +1,46 @@
+---
+title: AgentOps observability stack
+---
+graph LR
+    classDef fleet fill:#1f3a5f,stroke:#7aa2d6,stroke-width:2px,color:#e8edf5
+    classDef collector fill:#3a2a5f,stroke:#b39ddb,stroke-width:2px,color:#e8edf5
+    classDef store fill:#2a4a3a,stroke:#7ad6a2,stroke-width:2px,color:#e8edf5
+    classDef ui fill:#5f3a1f,stroke:#d6a27a,stroke-width:2px,color:#e8edf5
+    classDef oper fill:#222,stroke:#888,stroke-dasharray:4 3,color:#ddd
+
+    subgraph FLEET["Agent fleet (Python, OTel SDK 1.28)"]
+        A1[orchestrator]
+        A2[researcher]
+        A3[synthesizer]
+    end
+
+    OC["otel-collector-contrib 0.118<br/>OTLP gRPC :4317 / HTTP :4318<br/>memory_limiter -> resource -> batch"]
+
+    subgraph STORES["Telemetry stores"]
+        J["Jaeger 1.62<br/>traces (OTLP :4317)"]
+        P["Prometheus 2.55<br/>metrics (pull :8889)"]
+        L["Loki 3.2<br/>logs (OTLP/HTTP :3100)"]
+    end
+
+    G["Grafana 11.3<br/>unified UI :3000<br/>4 provisioned dashboards"]
+
+    SRE(("on-call SRE"))
+
+    A1 -- OTLP/HTTP --> OC
+    A2 -- OTLP/HTTP --> OC
+    A3 -- OTLP/HTTP --> OC
+
+    OC -- otlp/jaeger --> J
+    OC -- prometheus exporter --> P
+    OC -- otlphttp/loki --> L
+
+    J --> G
+    P --> G
+    L --> G
+    G --> SRE
+
+    class A1,A2,A3 fleet
+    class OC collector
+    class J,P,L store
+    class G ui
+    class SRE oper

@@ -1,0 +1,16 @@
+[project]
+name = "agentops-fleet"
+version = "0.1.0"
+description = "Three-agent demo fleet emitting AgentOps-taxonomy OTLP telemetry."
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+  # OpenTelemetry SDK + OTLP/HTTP exporter (matches the collector's 4318 port).
+  "opentelemetry-api==1.28.2",
+  "opentelemetry-sdk==1.28.2",
+  "opentelemetry-exporter-otlp-proto-http==1.28.2",
+  # Metrics + logs SDK (bundled with the same wheel, kept explicit for clarity).
+  "opentelemetry-exporter-otlp==1.28.2",
+  # No heavy LLM SDK by design — the fake LLM is deterministic, hermetic, free.
+]

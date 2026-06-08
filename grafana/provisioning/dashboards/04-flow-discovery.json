@@ -1,0 +1,249 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Flow discovery (arXiv 2503.06745). Derives agent execution graphs from trace data and surfaces divergence. KEY CAVEAT: sequence-aware panels (stability score, top-N flows, divergence rate) need per-trace structured logs that include {trace_id, checkpoint}. R13.1's current instrumentation emits checkpoints as span events only — see grafana/recording-rules.md for the small instrumentation change required.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    { "title": "Agent Overview", "url": "/d/agentops-overview", "type": "link", "icon": "external link" },
+    { "title": "Cost & Budget",  "url": "/d/agentops-cost",     "type": "link", "icon": "external link" },
+    { "title": "Tool Calls",     "url": "/d/agentops-tools",    "type": "link", "icon": "external link" }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Discovered call graph",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "nodeGraph",
+      "title": "Orchestrator -> workers (Jaeger node graph)",
+      "description": "Live Jaeger trace topology. Edges are spans, nodes are service operations. The orchestrator should fan out to researcher + synthesizer; new edges signal a behavior change.",
+      "datasource": { "type": "jaeger", "uid": "jaeger" },
+      "gridPos": { "h": 12, "w": 14, "x": 0, "y": 1 },
+      "options": {
+        "nodes": { "mainStatUnit": "ms" },
+        "edges": { "mainStatUnit": "ms" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "jaeger", "uid": "jaeger" },
+          "queryType": "dependencyGraph",
+          "refId": "A",
+          "service": "agent-fleet",
+          "operation": ""
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Flow stability score (1h)",
+      "description": "stability = 1 - (distinct checkpoint kinds / total checkpoint events). A pragmatic Prometheus-only proxy: when the same handful of checkpoints repeat, the score approaches 1.0; when every run introduces new checkpoint names, it heads to 0. Production-grade per-trace-sequence stability is documented as a TODO in recording-rules.md.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 10, "x": 14, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.85 }
+            ]
+          },
+          "min": 0,
+          "max": 1,
+          "decimals": 2,
+          "unit": "none"
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "clamp_min(clamp_max(1 - (count(count by (checkpoint) (increase(agentops_flow_checkpoints_total[1h]) > 0)) / clamp_min(sum(increase(agentops_flow_checkpoints_total[1h])), 1)), 1), 0)",
+          "legendFormat": "stability",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "Mean checkpoints per plan-step (1h)",
+      "description": "agentops_flow_checkpoints_total / agentops_plan_steps_total. High values suggest agents are firing many checkpoints per plan step — a sign of retry loops or over-planning. Per-agent variant blocked until the flow_checkpoints counter carries an `agent` label (TODO in instrumentation.py:319).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 10, "x": 14, "y": 7 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "continuous-GrYlRd" },
+          "unit": "short",
+          "decimals": 2
+        }
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agentops_flow_checkpoints_total[1h])) / clamp_min(sum(increase(agentops_plan_steps_total[1h])), 1)",
+          "legendFormat": "fleet-wide",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "row",
+      "title": "Discovered checkpoints",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "panels": []
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Top-N checkpoints by frequency (1h)",
+      "description": "Each row is a distinct checkpoint name, with how many times agents hit it in the last hour. The spec asked for distinct *sequences*; without per-trace structured logs we can only rank checkpoints. The relative weights here still highlight which checkpoints are load-bearing (the happy-path ones) vs. which are deviation-only (the failure-mode ones like researcher.search_failed).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 10, "w": 14, "x": 0, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left", "displayMode": "auto" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value" },
+            "properties": [
+              { "id": "displayName", "value": "hits / hr" },
+              {
+                "id": "custom.displayMode",
+                "value": "color-background-solid"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "blue", "value": null },
+                    { "color": "green", "value": 10 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true, "footer": { "show": false } },
+      "targets": [
+        {
+          "expr": "sort_desc(sum by (checkpoint) (increase(agentops_flow_checkpoints_total[1h])))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": {} } },
+        { "id": "limit", "options": { "limitField": 15 } }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Checkpoint diversity over time",
+      "description": "Distinct checkpoint names seen per $__interval. Spikes indicate behavior change — agents firing checkpoints they didn't fire before. Approximates 'flow divergence rate'; the true sequence-aware version needs per-trace sequence reconstruction (TODO).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 10, "w": 10, "x": 14, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 30
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 6 },
+              { "color": "red", "value": 12 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "count(count by (checkpoint) (rate(agentops_flow_checkpoints_total[$__rate_interval]) > 0))",
+          "legendFormat": "distinct checkpoints",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Context",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "text",
+      "title": "How this dashboard works",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Flow discovery** (arXiv 2503.06745) reframes agent behavior as a process-mining problem: every trace is a *case*, every `flow.checkpoint` span event is an *event*, and the ordered list of checkpoints per trace is a *sequence*. This dashboard derives five things from that:\n\n1. **Node graph** — Jaeger's `dependencyGraph` query, no derivation needed; shows the actual service-call topology.\n2. **Flow stability** — `1 - distinct_checkpoint_kinds / total_checkpoint_events`. A Prometheus-only proxy: stays high when the same checkpoints recur, drops when novel checkpoints appear. Range `[0, 1]`. **TODO:** for true per-trace sequence stability, see `grafana/recording-rules.md` Option A — add `trace_id` + `checkpoint` to the agent's structured log line in `instrumentation.py::flow_checkpoint`, and the Loki query reconstructs sequences.\n3. **Top-N checkpoints** — `sort_desc(sum by (checkpoint) ...)`. The high-frequency checkpoints are the happy path; long-tail ones are deviation modes (researcher.search_failed, researcher.fetch_failed).\n4. **Checkpoint diversity** — distinct-checkpoint count over time. A spike means the agents started doing new things.\n5. **Mean checkpoints per plan-step** — total checkpoints divided by total plan-steps. Watches for stuckness (lots of checkpoints per plan).\n\n**Three instrumentation changes** would close the remaining gaps:\n\n- Add an `agent` label to `agentops_flow_checkpoints_total` (one line in `instrumentation.py::flow_checkpoint`).\n- Add an `agent` label to `agentops_llm_*` counters (so cost dashboard can attribute spend per agent).\n- Log a structured line `{trace_id, agent, checkpoint}` from `flow_checkpoint()` so Loki can do per-trace sequence reconstruction."
+      }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["agentops", "flow", "paper-2"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AgentOps - Flow Discovery",
+  "uid": "agentops-flow",
+  "version": 1,
+  "weekStart": ""
+}
