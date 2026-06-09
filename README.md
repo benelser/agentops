@@ -14,10 +14,10 @@ the papers argue an agent system needs to be safe in production. Clone it,
 
 > If your client doesn't render the inline player above, fall back to:
 > **[Play the MP4 on GitHub](https://github.com/benelser/agentops/blob/main/media/agentops-lunch-and-learn.mp4)** ·
-> **[Download the latest cut (v0.2.0)](https://github.com/benelser/agentops/releases/download/v0.2.0/agentops-lunch-and-learn.mp4)** ·
-> 1920×1080 · 9:42 · H.264 + AAC · −16 LUFS · 35 MB · OpenAI gpt-4o-mini-tts (`ash`)
+> **[Download the latest cut (v0.3.0)](https://github.com/benelser/agentops/releases/download/v0.3.0/agentops-lunch-and-learn.mp4)** ·
+> 1920×1080 · 10:59 · H.264 + AAC · −16 LUFS · 47 MB · OpenAI gpt-4o-mini-tts (`ash`)
 
-A 9:42 narrated walkthrough of the stack — built end-to-end by
+A 10:59 narrated walkthrough of the stack — built end-to-end by
 [**docent**][docent] from this repo's [runbook](runbook/),
 [diagrams](diagrams/), and live recordings of the four dashboards under real
 agent traffic. Voiced as a **peer engineer giving a casual lunch-and-learn**,
@@ -29,14 +29,28 @@ The film opens by killing one misconception:
 
 > "OpenTelemetry on an LLM agent is just HTTP request tracing."
 
-Then it walks the five-span taxonomy from [paper 1][p1], plays the live
-agent fleet, annotates the Python decorator API, names where the runbook
-does *not* apply, and closes on the flow-stability score from [paper 2][p2]
-that tells you the plan is drifting while every individual request still
-looks fine. It ends the way a real lunch-and-learn ends: **"That's it.
-Questions?"**
+Then it walks the five-span taxonomy from [paper 1][p1], shows a real
+Jaeger trace built from those spans, plays the live agent fleet with
+cursor-and-pin computer-use overlays guiding the eye, annotates the Python
+decorator API, names where the runbook does *not* apply, and closes on the
+flow-stability score from [paper 2][p2] that tells you the plan is drifting
+while every individual request still looks fine. It ends the way a real
+lunch-and-learn ends: **"That's it. Questions?"**
 
-**Earlier cuts:** [v0.1.0](https://github.com/benelser/agentops/releases/tag/v0.1.0) (Kokoro, 7:45, academic register).
+The v0.3 cut is the one where docent's dogfood drove **six concrete
+extension points** into existence — two new scene types (`waterfall`,
+`query`), the `demonstrate` cursor+pin overlay grammar, a custom preset
+that re-themes the scene chrome (not just the colors), a `ChromeTokens`
+preset extension, and the first real third-party `FeaturePlugin`
+(`agentopsContextHud` — the bottom-left observability HUD with drifting
+stability dot). See the [v0.3 release notes][v3notes] for the architecture
+deltas.
+
+[v3notes]: https://github.com/benelser/agentops/releases/tag/v0.3.0
+
+**Earlier cuts:**
+- [v0.2.0](https://github.com/benelser/agentops/releases/tag/v0.2.0) (OpenAI ash, 9:42, conversational tone)
+- [v0.1.0](https://github.com/benelser/agentops/releases/tag/v0.1.0) (Kokoro, 7:45, documentary register)
 
 > **This repository was authored end-to-end by [docent][docent] — an
 > explanation-film engine that takes a curated knowledge-base directory and
