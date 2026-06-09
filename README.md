@@ -14,8 +14,8 @@ the papers argue an agent system needs to be safe in production. Clone it,
 
 > If your client doesn't render the inline player above, fall back to:
 > **[Play the MP4 on GitHub](https://github.com/benelser/agentops/blob/main/media/agentops-lunch-and-learn.mp4)** ·
-> **[Download the latest cut (v0.3.0)](https://github.com/benelser/agentops/releases/download/v0.3.0/agentops-lunch-and-learn.mp4)** ·
-> 1920×1080 · 10:59 · H.264 + AAC · −16 LUFS · 47 MB · OpenAI gpt-4o-mini-tts (`ash`)
+> **[Download the latest cut (v0.4.0)](https://github.com/benelser/agentops/releases/download/v0.4.0/agentops-lunch-and-learn.mp4)** ·
+> 1920×1080 · 9:38 · H.264 + AAC · −16 LUFS · 44 MB · OpenAI gpt-4o-mini-tts (`ash`)
 
 A 10:59 narrated walkthrough of the stack — built end-to-end by
 [**docent**][docent] from this repo's [runbook](runbook/),
@@ -49,6 +49,7 @@ deltas.
 [v3notes]: https://github.com/benelser/agentops/releases/tag/v0.3.0
 
 **Earlier cuts:**
+- [v0.3.0](https://github.com/benelser/agentops/releases/tag/v0.3.0) (6 docent extension points, 10:59, OpenAI ash)
 - [v0.2.0](https://github.com/benelser/agentops/releases/tag/v0.2.0) (OpenAI ash, 9:42, conversational tone)
 - [v0.1.0](https://github.com/benelser/agentops/releases/tag/v0.1.0) (Kokoro, 7:45, documentary register)
 
