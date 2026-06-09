@@ -10,7 +10,12 @@ the papers argue an agent system needs to be safe in production. Clone it,
 
 ## 🎬 Watch the lunch-and-learn
 
-[![AgentOps lunch-and-learn — instrument the five spans](diagrams/lunch-and-learn-thumb.png)](https://github.com/benelser/agentops/releases/download/v0.1.0/agentops-lunch-and-learn.mp4)
+<video src="https://github.com/benelser/agentops/raw/main/media/agentops-lunch-and-learn.mp4" controls poster="https://github.com/benelser/agentops/raw/main/diagrams/lunch-and-learn-thumb.png" width="100%"></video>
+
+> If your client doesn't render the inline player above, fall back to:
+> **[Play the MP4 on GitHub](https://github.com/benelser/agentops/blob/main/media/agentops-lunch-and-learn.mp4)** ·
+> **[Download from releases](https://github.com/benelser/agentops/releases/download/v0.1.0/agentops-lunch-and-learn.mp4)** ·
+> 1920×1080 · 7:45 · H.264 + AAC · −16 LUFS · 34 MB
 
 A 7:45 narrated walkthrough of the stack — built end-to-end by
 [**docent**][docent] from this repo's [runbook](runbook/),
@@ -24,8 +29,6 @@ agent fleet, annotates the Python decorator API, names where the runbook
 does *not* apply, and closes on the flow-stability score from [paper 2][p2]
 that tells you the plan is drifting while every individual request still
 looks fine.
-
-> ▶ **[Download / play the MP4 (34 MB)](https://github.com/benelser/agentops/releases/download/v0.1.0/agentops-lunch-and-learn.mp4)** · 1920×1080 · 7:45 · H.264 + AAC · -16 LUFS
 
 > **This repository was authored end-to-end by [docent][docent] — an
 > explanation-film engine that takes a curated knowledge-base directory and
