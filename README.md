@@ -8,13 +8,31 @@ A complete OpenTelemetry stack — collector, Jaeger, Prometheus, Loki, Grafana
 the papers argue an agent system needs to be safe in production. Clone it,
 `docker compose up`, open Grafana, watch agents work in real time.
 
+## 🎬 Watch the lunch-and-learn
+
+[![AgentOps lunch-and-learn — instrument the five spans](diagrams/lunch-and-learn-thumb.png)](https://github.com/benelser/agentops/releases/download/v0.1.0/agentops-lunch-and-learn.mp4)
+
+A 7:45 narrated walkthrough of the stack — built end-to-end by
+[**docent**][docent] from this repo's [runbook](runbook/),
+[diagrams](diagrams/), and live recordings of the four dashboards under real
+agent traffic. The film opens by killing one misconception:
+
+> "OpenTelemetry on an LLM agent is just HTTP request tracing."
+
+Then it walks the five-span taxonomy from [paper 1][p1], plays the live
+agent fleet, annotates the Python decorator API, names where the runbook
+does *not* apply, and closes on the flow-stability score from [paper 2][p2]
+that tells you the plan is drifting while every individual request still
+looks fine.
+
+> ▶ **[Download / play the MP4 (34 MB)](https://github.com/benelser/agentops/releases/download/v0.1.0/agentops-lunch-and-learn.mp4)** · 1920×1080 · 7:45 · H.264 + AAC · -16 LUFS
+
 > **This repository was authored end-to-end by [docent][docent] — an
 > explanation-film engine that takes a curated knowledge-base directory and
 > renders a narrated lunch-and-learn film.** The whole stack you see here,
 > from the docker-compose to the 5,806-word operator runbook, was produced
 > by parallel-DAG worktree-isolated agents under docent's orchestration.
-> The companion film is at `out/agentops-lunch-and-learn.mp4` in the docent
-> repo. See [§ How this was built](#how-this-was-built).
+> See [§ How this was built](#how-this-was-built).
 
 ## Quick start
 
